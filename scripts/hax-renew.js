@@ -29,7 +29,7 @@ async function main() {
     const infoText = await getBodyText(page);
     const expiryDate = findExpiryDate(infoText);
     if (!expiryDate) {
-      throw new Error('Could not find an expiry date on the VPS info page.');
+      throw new Error(`Could not find an expiry date on the VPS info page. ${await pageDiagnostics(page, infoText)}`);
     }
 
     const remainingDays = daysUntil(expiryDate);
@@ -121,6 +121,25 @@ async function clickRenewButton(page) {
 
 async function getBodyText(page) {
   return page.locator('body').innerText({ timeout: 30_000 });
+}
+
+async function pageDiagnostics(page, pageText) {
+  const title = await page.title().catch(() => 'unknown');
+  const url = page.url();
+  const hasPasswordInput = await page.locator('input[type=\"password\"]:visible').count().then((count) => count > 0).catch(() => false);
+  const hasLoginText = /login|sign in|masuk/i.test(pageText);
+  const dateMatches = [...pageText.matchAll(/\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+\d{4})\b/gi)]
+    .map((match) => match[0])
+    .slice(0, 5);
+
+  return JSON.stringify({
+    url,
+    title,
+    textLength: pageText.length,
+    hasPasswordInput,
+    hasLoginText,
+    dateMatches
+  });
 }
 
 async function notify(message) {
