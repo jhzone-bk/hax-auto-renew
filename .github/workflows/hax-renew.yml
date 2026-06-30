@@ -1,0 +1,41 @@
+name: Hax VPS Auto Renew
+
+on:
+  schedule:
+    - cron: '0 1 * * *'
+  workflow_dispatch:
+
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run parser tests
+        run: npm test
+
+      - name: Renew Hax VPS if needed
+        run: npm run renew
+        env:
+          HAX_USERNAME: ${{ secrets.HAX_USERNAME }}
+          HAX_PASSWORD: ${{ secrets.HAX_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          RENEW_THRESHOLD_DAYS: ${{ vars.RENEW_THRESHOLD_DAYS || '3' }}
+          TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Shanghai' }}
+          HAX_INFO_URL: ${{ vars.HAX_INFO_URL || 'https://hax.co.id/vps-info' }}
+          HAX_RENEW_URL: ${{ vars.HAX_RENEW_URL || 'https://hax.co.id/vps-renew/' }}
