@@ -1,0 +1,13 @@
+{
+  "name": "hax-auto-renew",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "renew": "node scripts/hax-renew.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "playwright": "^1.54.1"
+  }
+}
