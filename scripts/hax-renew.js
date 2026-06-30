@@ -59,9 +59,7 @@ async function main() {
 function validateConfig(values) {
   const missing = [
     ['HAX_USERNAME', values.username],
-    ['HAX_PASSWORD', values.password],
-    ['TELEGRAM_BOT_TOKEN', values.telegramBotToken],
-    ['TELEGRAM_CHAT_ID', values.telegramChatId]
+    ['HAX_PASSWORD', values.password]
   ].filter(([, value]) => !value);
 
   if (missing.length) {
@@ -126,6 +124,11 @@ async function getBodyText(page) {
 }
 
 async function notify(message) {
+  if (!config.telegramBotToken || !config.telegramChatId) {
+    console.log(message);
+    return;
+  }
+
   const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
   const response = await fetch(url, {
     method: 'POST',
