@@ -20,12 +20,20 @@ async function main() {
   const page = await context.newPage();
 
   try {
-    await page.goto(config.infoUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+    let infoText = await loadInfoPage(page);
+    let expiryDate = findExpiryDate(infoText);
 
-    const infoText = await getBodyText(page);
-    const expiryDate = findExpiryDate(infoText);
     if (!expiryDate) {
-      throw new Error(`Could not find an expiry date. Cookie may be expired or Hax blocked the request. ${await pageDiagnostics(page, infoText)}`);
+      const diagnostics = await pageDiagnostics(page, infoText);
+      if (isCloudflareChallenge(diagnostics)) {
+        await refreshCloudflareCookies(context, page);
+        infoText = await loadInfoPage(page);
+        expiryDate = findExpiryDate(infoText);
+      }
+    }
+
+    if (!expiryDate) {
+      throw new Error(`Could not find an expiry date. Cookie may be expired or Hax blocked the request. ${JSON.stringify(await pageDiagnostics(page, infoText))}`);
     }
 
     const remainingDays = daysUntil(expiryDate);
@@ -40,6 +48,11 @@ async function main() {
   } finally {
     await browser.close();
   }
+}
+
+async function loadInfoPage(page) {
+  await page.goto(config.infoUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  return getBodyText(page);
 }
 
 function validateConfig(values) {
@@ -100,14 +113,27 @@ async function pageDiagnostics(page, pageText) {
     .map((match) => match[0])
     .slice(0, 5);
 
-  return JSON.stringify({
+  return {
     url,
     title,
     textLength: pageText.length,
     hasPasswordInput,
     hasLoginText,
     dateMatches
-  });
+  };
+}
+
+function isCloudflareChallenge(diagnostics) {
+  return /just a moment/i.test(diagnostics.title) || /__cf_chl_|cf_chl/i.test(diagnostics.url);
+}
+
+async function refreshCloudflareCookies(context, page) {
+  const refreshUrl = new URL('/create-vps/', config.infoUrl).href;
+  console.log(`Refreshing Cloudflare cookies from ${refreshUrl}`);
+  await page.goto(refreshUrl, { waitUntil: 'load', timeout: 60_000 });
+  await page.waitForTimeout(8_000);
+  const cookies = await context.cookies();
+  console.log(`Cloudflare cookie refresh completed. Cookie names: ${cookies.map((cookie) => cookie.name).join(', ')}`);
 }
 
 async function notify(title, message) {
