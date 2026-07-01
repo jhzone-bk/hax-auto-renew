@@ -5,15 +5,11 @@ import { daysUntil, findExpiryDate } from './expiry-parser.js';
 const config = {
   username: process.env.HAX_USERNAME,
   password: process.env.HAX_PASSWORD,
-  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
-  telegramChatId: process.env.TELEGRAM_CHAT_ID,
-  thresholdDays: Number.parseInt(process.env.RENEW_THRESHOLD_DAYS || '3', 10),
+  pushplusToken: process.env.PUSHPLUS_TOKEN,
+  thresholdDays: Number.parseInt(process.env.REMIND_THRESHOLD_DAYS || process.env.RENEW_THRESHOLD_DAYS || '3', 10),
   timezone: process.env.TIMEZONE || 'Asia/Shanghai',
-  infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info',
-  renewUrl: process.env.HAX_RENEW_URL || 'https://hax.co.id/vps-renew/'
+  infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info'
 };
-
-const RENEW_RESULT_HINT = /(success|successful|renewed|berhasil|sukses|extended|diperpanjang)/i;
 
 async function main() {
   validateConfig(config);
@@ -33,23 +29,13 @@ async function main() {
     }
 
     const remainingDays = daysUntil(expiryDate);
-    if (remainingDays > config.thresholdDays) {
-      await notify(`Hax VPS does not need renewal. Expiry: ${formatDate(expiryDate)} (${remainingDays} days left).`);
-      return;
-    }
+    const message = remainingDays <= config.thresholdDays
+      ? `Hax VPS is close to expiry: ${formatDate(expiryDate)} (${remainingDays} days left).`
+      : `Hax VPS expiry check OK: ${formatDate(expiryDate)} (${remainingDays} days left).`;
 
-    await page.goto(config.renewUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await loginIfNeeded(page);
-    await clickRenewButton(page);
-
-    const resultText = await getBodyText(page);
-    if (!RENEW_RESULT_HINT.test(resultText)) {
-      throw new Error('Renewal was submitted, but no success message was detected.');
-    }
-
-    await notify(`Hax VPS renewal succeeded. Previous expiry: ${formatDate(expiryDate)} (${remainingDays} days left).`);
+    await notify('Hax VPS 到期提醒', message);
   } catch (error) {
-    await notify(`Hax VPS renewal failed: ${error.message}`);
+    await notify('Hax VPS 查询失败', `Hax VPS expiry check failed: ${error.message}`);
     throw error;
   } finally {
     await browser.close();
@@ -67,7 +53,7 @@ function validateConfig(values) {
   }
 
   if (!Number.isInteger(values.thresholdDays) || values.thresholdDays < 0) {
-    throw new Error('RENEW_THRESHOLD_DAYS must be a non-negative integer.');
+    throw new Error('REMIND_THRESHOLD_DAYS must be a non-negative integer.');
   }
 }
 
@@ -103,22 +89,6 @@ async function loginIfNeeded(page) {
   }
 }
 
-async function clickRenewButton(page) {
-  const renewButton = page
-    .getByRole('button', { name: /renew|perpanjang|extend|lanjut/i })
-    .or(page.getByRole('link', { name: /renew|perpanjang|extend|lanjut/i }))
-    .first();
-
-  if ((await renewButton.count()) === 0) {
-    throw new Error('Renew page loaded, but no renewal button or link was found.');
-  }
-
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded', { timeout: 60_000 }).catch(() => {}),
-    renewButton.click()
-  ]);
-}
-
 async function getBodyText(page) {
   return page.locator('body').innerText({ timeout: 30_000 });
 }
@@ -126,7 +96,7 @@ async function getBodyText(page) {
 async function pageDiagnostics(page, pageText) {
   const title = await page.title().catch(() => 'unknown');
   const url = page.url();
-  const hasPasswordInput = await page.locator('input[type=\"password\"]:visible').count().then((count) => count > 0).catch(() => false);
+  const hasPasswordInput = await page.locator('input[type="password"]:visible').count().then((count) => count > 0).catch(() => false);
   const hasLoginText = /login|sign in|masuk/i.test(pageText);
   const dateMatches = [...pageText.matchAll(/\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+\d{4})\b/gi)]
     .map((match) => match[0])
@@ -142,25 +112,31 @@ async function pageDiagnostics(page, pageText) {
   });
 }
 
-async function notify(message) {
-  if (!config.telegramBotToken || !config.telegramChatId) {
-    console.log(message);
+async function notify(title, message) {
+  console.log(`${title}: ${message}`);
+
+  if (!config.pushplusToken) {
     return;
   }
 
-  const url = `https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`;
-  const response = await fetch(url, {
+  const response = await fetch('https://www.pushplus.plus/send', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      chat_id: config.telegramChatId,
-      text: message,
-      disable_web_page_preview: true
+      token: config.pushplusToken,
+      title,
+      content: message,
+      template: 'txt'
     })
   });
 
   if (!response.ok) {
-    throw new Error(`Telegram notification failed with HTTP ${response.status}.`);
+    throw new Error(`PushPlus notification failed with HTTP ${response.status}.`);
+  }
+
+  const result = await response.json().catch(() => null);
+  if (result && result.code !== 200) {
+    throw new Error(`PushPlus notification failed: ${result.msg || JSON.stringify(result)}`);
   }
 }
 

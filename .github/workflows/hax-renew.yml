@@ -1,4 +1,4 @@
-name: Hax VPS Auto Renew
+name: Hax VPS Expiry Reminder
 
 on:
   schedule:
@@ -28,14 +28,12 @@ jobs:
       - name: Run parser tests
         run: npm test
 
-      - name: Renew Hax VPS if needed
+      - name: Check Hax VPS expiry
         run: npm run renew
         env:
           HAX_USERNAME: ${{ secrets.HAX_USERNAME }}
           HAX_PASSWORD: ${{ secrets.HAX_PASSWORD }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          RENEW_THRESHOLD_DAYS: ${{ vars.RENEW_THRESHOLD_DAYS || '3' }}
+          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          REMIND_THRESHOLD_DAYS: ${{ vars.REMIND_THRESHOLD_DAYS || vars.RENEW_THRESHOLD_DAYS || '3' }}
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Shanghai' }}
           HAX_INFO_URL: ${{ vars.HAX_INFO_URL || 'https://hax.co.id/vps-info' }}
-          HAX_RENEW_URL: ${{ vars.HAX_RENEW_URL || 'https://hax.co.id/vps-renew/' }}
