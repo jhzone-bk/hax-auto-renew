@@ -2,6 +2,8 @@ import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { daysUntil, findExpiryDate } from './expiry-parser.js';
 
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+
 const config = {
   cookie: process.env.HAX_COOKIE,
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
@@ -14,10 +16,17 @@ const config = {
 async function main() {
   validateConfig(config);
 
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ timezoneId: config.timezone });
-  await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
-  const page = await context.newPage();
+  const browser = await chromium.launch({
+    headless: true,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--no-sandbox'
+    ]
+  });
+  const session = await createSession(browser);
+  let context = session.context;
+  let page = session.page;
 
   try {
     let infoText = await loadInfoPage(page);
@@ -26,7 +35,8 @@ async function main() {
     if (!expiryDate) {
       const diagnostics = await pageDiagnostics(page, infoText);
       if (isCloudflareChallenge(diagnostics)) {
-        await refreshCloudflareCookies(context, page);
+        await context.close();
+        ({ context, page } = await refreshCloudflareCookies(browser));
         infoText = await loadInfoPage(page);
         expiryDate = findExpiryDate(infoText);
       }
@@ -50,8 +60,32 @@ async function main() {
   }
 }
 
+async function createSession(browser) {
+  const context = await browser.newContext({
+    timezoneId: config.timezone,
+    locale: 'en-US',
+    userAgent: USER_AGENT,
+    viewport: { width: 1920, height: 1080 },
+    screen: { width: 1920, height: 1080 },
+    extraHTTPHeaders: {
+      'accept-language': 'en-US,en;q=0.9,id;q=0.8,zh-CN;q=0.7'
+    }
+  });
+
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+  });
+  await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
+
+  return {
+    context,
+    page: await context.newPage()
+  };
+}
+
 async function loadInfoPage(page) {
   await page.goto(config.infoUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await waitForCloudflare(page);
   return getBodyText(page);
 }
 
@@ -127,13 +161,24 @@ function isCloudflareChallenge(diagnostics) {
   return /just a moment/i.test(diagnostics.title) || /__cf_chl_|cf_chl/i.test(diagnostics.url);
 }
 
-async function refreshCloudflareCookies(context, page) {
+async function refreshCloudflareCookies(browser) {
   const refreshUrl = new URL('/create-vps/', config.infoUrl).href;
+  const { context, page } = await createSession(browser);
   console.log(`Refreshing Cloudflare cookies from ${refreshUrl}`);
-  await page.goto(refreshUrl, { waitUntil: 'load', timeout: 60_000 });
-  await page.waitForTimeout(8_000);
+  await page.goto(refreshUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await waitForCloudflare(page);
   const cookies = await context.cookies();
-  console.log(`Cloudflare cookie refresh completed. Cookie names: ${cookies.map((cookie) => cookie.name).join(', ')}`);
+  const cookieNames = cookies.map((cookie) => cookie.name).join(', ');
+  console.log(`Cloudflare cookie refresh completed. Cookie names: ${cookieNames || 'none'}`);
+  return { context, page };
+}
+
+async function waitForCloudflare(page) {
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const title = await page.title().catch(() => '');
+    if (!/just a moment/i.test(title) && !/__cf_chl_|cf_chl/i.test(page.url())) return;
+    await page.waitForTimeout(5_000);
+  }
 }
 
 async function notify(title, message) {
