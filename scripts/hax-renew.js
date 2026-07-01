@@ -131,12 +131,13 @@ async function notify(title, message) {
   });
 
   if (!response.ok) {
-    throw new Error(`PushPlus notification failed with HTTP ${response.status}.`);
+    console.warn(`PushPlus notification failed with HTTP ${response.status}.`);
+    return;
   }
 
   const result = await response.json().catch(() => null);
   if (result && result.code !== 200) {
-    throw new Error(`PushPlus notification failed: ${result.msg || JSON.stringify(result)}`);
+    console.warn(`PushPlus notification failed: ${result.msg || JSON.stringify(result)}`);
   }
 }
 
