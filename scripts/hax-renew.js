@@ -47,6 +47,8 @@ async function main() {
       const diagnostics = await pageDiagnostics(page, infoText);
       const reason = isCloudflareChallenge(diagnostics)
         ? 'Cloudflare challenge did not clear on GitHub Actions. The cookie may be valid in your browser but blocked on GitHub runner.'
+        : isLoginPage(diagnostics)
+          ? 'Cloudflare passed, but Hax redirected to login. HAX_COOKIE is expired or does not include the full logged-in session cookie.'
         : 'Could not find an expiry date. Cookie may be expired or the Hax page format changed.';
       throw new Error(`${reason} ${JSON.stringify(diagnostics)}`);
     }
@@ -111,6 +113,9 @@ function validateConfig(values) {
 }
 
 function parseCookieHeader(cookieHeader, url) {
+  const jsonCookies = parseCookieJson(cookieHeader, url);
+  if (jsonCookies) return jsonCookies;
+
   const { hostname } = new URL(url);
   const cookies = cookieHeader
     .split(';')
@@ -139,6 +144,42 @@ function parseCookieHeader(cookieHeader, url) {
   return cookies;
 }
 
+function parseCookieJson(cookieHeader, url) {
+  const trimmed = cookieHeader.trim();
+  if (!trimmed.startsWith('[') && !trimmed.startsWith('{')) return null;
+
+  const { hostname } = new URL(url);
+  const parsed = JSON.parse(trimmed);
+  const source = Array.isArray(parsed) ? parsed : parsed.cookies;
+  if (!Array.isArray(source)) {
+    throw new Error('HAX_COOKIE JSON must be an array, or an object with a cookies array.');
+  }
+
+  const cookies = source
+    .filter((cookie) => cookie && cookie.name && cookie.value !== undefined)
+    .map((cookie) => ({
+      name: String(cookie.name),
+      value: String(cookie.value),
+      domain: cookie.domain || hostname,
+      path: cookie.path || '/',
+      httpOnly: Boolean(cookie.httpOnly),
+      secure: cookie.secure !== false,
+      sameSite: normalizeSameSite(cookie.sameSite)
+    }));
+
+  if (!cookies.length) {
+    throw new Error('HAX_COOKIE JSON does not contain any cookies with name and value.');
+  }
+
+  return cookies;
+}
+
+function normalizeSameSite(value) {
+  if (/^strict$/i.test(value || '')) return 'Strict';
+  if (/^none$/i.test(value || '')) return 'None';
+  return 'Lax';
+}
+
 async function getBodyText(page) {
   return page.locator('body').innerText({ timeout: 30_000 });
 }
@@ -164,6 +205,10 @@ async function pageDiagnostics(page, pageText) {
 
 function isCloudflareChallenge(diagnostics) {
   return /just a moment/i.test(diagnostics.title) || /__cf_chl_|cf_chl/i.test(diagnostics.url);
+}
+
+function isLoginPage(diagnostics) {
+  return /\/login\b/i.test(diagnostics.url) || diagnostics.hasLoginText;
 }
 
 async function refreshCloudflareCookies(browser) {

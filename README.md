@@ -4,7 +4,7 @@ Checks `https://hax.co.id/vps-info` with an existing Hax login cookie and sends 
 
 ## Required Secrets
 
-- `HAX_COOKIE`: copied from a logged-in Hax browser session, for example `name=value; name2=value2`.
+- `HAX_COOKIE`: copied from a logged-in Hax browser session. It can be either `name=value; name2=value2` or the full JSON exported by a cookie extension such as Cookie-Editor.
 - `TELEGRAM_BOT_TOKEN`: Telegram bot token.
 - `TELEGRAM_CHAT_ID`: Telegram chat ID that receives reminders.
 
@@ -16,7 +16,9 @@ Checks `https://hax.co.id/vps-info` with an existing Hax login cookie and sends 
 
 ## Cookie Renewal
 
-If the cookie expires, Hax redirects to login, asks for Telegram confirmation, or Cloudflare blocks the request, the workflow sends a Telegram failure message with diagnostics. Replace `HAX_COOKIE` with a fresh logged-in cookie and run the workflow again.
+If Hax redirects to login, Cloudflare has passed but the Hax login session cookie is expired or incomplete. Replace `HAX_COOKIE` with a fresh full cookie from a browser that is already logged in to Hax, then run the workflow again.
+
+If Cloudflare blocks GitHub Actions, the workflow sends a separate failure message saying the Cloudflare challenge did not clear.
 
 ## WeChat
 
