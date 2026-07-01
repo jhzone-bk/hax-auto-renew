@@ -34,9 +34,9 @@ jobs:
       - name: Check Hax VPS expiry
         run: npm run renew
         env:
-          HAX_USERNAME: ${{ secrets.HAX_USERNAME }}
-          HAX_PASSWORD: ${{ secrets.HAX_PASSWORD }}
-          PUSHPLUS_TOKEN: ${{ secrets.PUSHPLUS_TOKEN }}
+          HAX_COOKIE: ${{ secrets.HAX_COOKIE }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
           REMIND_THRESHOLD_DAYS: ${{ vars.REMIND_THRESHOLD_DAYS || vars.RENEW_THRESHOLD_DAYS || '3' }}
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Shanghai' }}
           HAX_INFO_URL: ${{ vars.HAX_INFO_URL || 'https://hax.co.id/vps-info' }}

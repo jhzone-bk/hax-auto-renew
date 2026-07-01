@@ -3,9 +3,9 @@ import { chromium } from 'playwright';
 import { daysUntil, findExpiryDate } from './expiry-parser.js';
 
 const config = {
-  username: process.env.HAX_USERNAME,
-  password: process.env.HAX_PASSWORD,
-  pushplusToken: process.env.PUSHPLUS_TOKEN,
+  cookie: process.env.HAX_COOKIE,
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
+  telegramChatId: process.env.TELEGRAM_CHAT_ID,
   thresholdDays: Number.parseInt(process.env.REMIND_THRESHOLD_DAYS || process.env.RENEW_THRESHOLD_DAYS || '3', 10),
   timezone: process.env.TIMEZONE || 'Asia/Shanghai',
   infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info'
@@ -16,16 +16,16 @@ async function main() {
 
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ timezoneId: config.timezone });
+  await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
   const page = await context.newPage();
 
   try {
     await page.goto(config.infoUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-    await loginIfNeeded(page);
 
     const infoText = await getBodyText(page);
     const expiryDate = findExpiryDate(infoText);
     if (!expiryDate) {
-      throw new Error(`Could not find an expiry date on the VPS info page. ${await pageDiagnostics(page, infoText)}`);
+      throw new Error(`Could not find an expiry date. Cookie may be expired or Hax blocked the request. ${await pageDiagnostics(page, infoText)}`);
     }
 
     const remainingDays = daysUntil(expiryDate);
@@ -33,9 +33,9 @@ async function main() {
       ? `Hax VPS is close to expiry: ${formatDate(expiryDate)} (${remainingDays} days left).`
       : `Hax VPS expiry check OK: ${formatDate(expiryDate)} (${remainingDays} days left).`;
 
-    await notify('Hax VPS 到期提醒', message);
+    await notify('Hax VPS expiry reminder', message);
   } catch (error) {
-    await notify('Hax VPS 查询失败', `Hax VPS expiry check failed: ${error.message}`);
+    await notify('Hax VPS cookie check failed', `Hax VPS expiry check failed: ${error.message}`);
     throw error;
   } finally {
     await browser.close();
@@ -44,8 +44,9 @@ async function main() {
 
 function validateConfig(values) {
   const missing = [
-    ['HAX_USERNAME', values.username],
-    ['HAX_PASSWORD', values.password]
+    ['HAX_COOKIE', values.cookie],
+    ['TELEGRAM_BOT_TOKEN', values.telegramBotToken],
+    ['TELEGRAM_CHAT_ID', values.telegramChatId]
   ].filter(([, value]) => !value);
 
   if (missing.length) {
@@ -57,36 +58,33 @@ function validateConfig(values) {
   }
 }
 
-async function loginIfNeeded(page) {
-  const passwordInput = page.locator('input[type="password"]:visible').first();
-  if ((await passwordInput.count()) === 0) {
-    return;
+function parseCookieHeader(cookieHeader, url) {
+  const { hostname } = new URL(url);
+  const cookies = cookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const separator = part.indexOf('=');
+      if (separator <= 0) return null;
+
+      return {
+        name: part.slice(0, separator).trim(),
+        value: part.slice(separator + 1).trim(),
+        domain: hostname,
+        path: '/',
+        httpOnly: false,
+        secure: true,
+        sameSite: 'Lax'
+      };
+    })
+    .filter(Boolean);
+
+  if (!cookies.length) {
+    throw new Error('HAX_COOKIE does not contain any name=value cookie pairs.');
   }
 
-  const usernameInput = page
-    .locator('input[name*="user" i]:visible, input[name*="email" i]:visible, input[type="email"]:visible, input[type="text"]:visible')
-    .first();
-
-  if ((await usernameInput.count()) === 0) {
-    throw new Error('Login page detected, but username input was not found.');
-  }
-
-  await usernameInput.fill(config.username);
-  await passwordInput.fill(config.password);
-
-  const submit = page.locator('button[type="submit"]:visible, input[type="submit"]:visible, button:visible').first();
-  if ((await submit.count()) === 0) {
-    throw new Error('Login page detected, but submit button was not found.');
-  }
-
-  await Promise.all([
-    page.waitForLoadState('domcontentloaded', { timeout: 60_000 }).catch(() => {}),
-    submit.click()
-  ]);
-
-  if ((await page.locator('input[type="password"]:visible').count()) > 0) {
-    throw new Error('Login appears to have failed; password input is still visible.');
-  }
+  return cookies;
 }
 
 async function getBodyText(page) {
@@ -97,7 +95,7 @@ async function pageDiagnostics(page, pageText) {
   const title = await page.title().catch(() => 'unknown');
   const url = page.url();
   const hasPasswordInput = await page.locator('input[type="password"]:visible').count().then((count) => count > 0).catch(() => false);
-  const hasLoginText = /login|sign in|masuk/i.test(pageText);
+  const hasLoginText = /login|sign in|masuk|telegram|phone|otp|verify/i.test(pageText);
   const dateMatches = [...pageText.matchAll(/\b(?:\d{4}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.]\d{4}|\d{1,2}\s+(?:Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+\d{4})\b/gi)]
     .map((match) => match[0])
     .slice(0, 5);
@@ -115,29 +113,24 @@ async function pageDiagnostics(page, pageText) {
 async function notify(title, message) {
   console.log(`${title}: ${message}`);
 
-  if (!config.pushplusToken) {
-    return;
-  }
-
-  const response = await fetch('https://www.pushplus.plus/send', {
+  const response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      token: config.pushplusToken,
-      title,
-      content: message,
-      template: 'txt'
+      chat_id: config.telegramChatId,
+      text: `${title}\n\n${message}`,
+      disable_web_page_preview: true
     })
   });
 
   if (!response.ok) {
-    console.warn(`PushPlus notification failed with HTTP ${response.status}.`);
+    console.warn(`Telegram notification failed with HTTP ${response.status}.`);
     return;
   }
 
   const result = await response.json().catch(() => null);
-  if (result && result.code !== 200) {
-    console.warn(`PushPlus notification failed: ${result.msg || JSON.stringify(result)}`);
+  if (result && result.ok !== true) {
+    console.warn(`Telegram notification failed: ${result.description || JSON.stringify(result)}`);
   }
 }
 
