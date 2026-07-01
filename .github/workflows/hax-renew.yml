@@ -10,7 +10,7 @@ on:
 
 jobs:
   renew:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64]
     timeout-minutes: 10
 
     steps:
@@ -32,7 +32,7 @@ jobs:
         run: npm test
 
       - name: Check Hax VPS expiry
-        run: xvfb-run -a npm run renew
+        run: npm run renew
         env:
           HAX_COOKIE: ${{ secrets.HAX_COOKIE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -40,4 +40,3 @@ jobs:
           REMIND_THRESHOLD_DAYS: ${{ vars.REMIND_THRESHOLD_DAYS || vars.RENEW_THRESHOLD_DAYS || '3' }}
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Shanghai' }}
           HAX_INFO_URL: ${{ vars.HAX_INFO_URL || 'https://hax.co.id/vps-info' }}
-          HAX_HEADLESS: 'false'

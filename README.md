@@ -2,6 +2,16 @@
 
 Checks `https://hax.co.id/vps-info` with an existing Hax login cookie and sends the result to Telegram.
 
+## Runner
+
+This workflow is configured for a Linux self-hosted GitHub Actions runner:
+
+```yaml
+runs-on: [self-hosted, Linux, X64]
+```
+
+Use a self-hosted runner when Hax rejects GitHub-hosted runners or ties login sessions to your local browser/IP environment.
+
 ## Required Secrets
 
 - `HAX_COOKIE`: copied from a logged-in Hax browser session. It can be either `name=value; name2=value2` or the full JSON exported by a cookie extension such as Cookie-Editor.
