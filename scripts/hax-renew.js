@@ -10,14 +10,15 @@ const config = {
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
   thresholdDays: Number.parseInt(process.env.REMIND_THRESHOLD_DAYS || process.env.RENEW_THRESHOLD_DAYS || '3', 10),
   timezone: process.env.TIMEZONE || 'Asia/Shanghai',
-  infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info'
+  infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info',
+  headless: process.env.HAX_HEADLESS !== 'false'
 };
 
 async function main() {
   validateConfig(config);
 
   const browser = await chromium.launch({
-    headless: true,
+    headless: config.headless,
     args: [
       '--disable-blink-features=AutomationControlled',
       '--disable-dev-shm-usage',
@@ -43,7 +44,11 @@ async function main() {
     }
 
     if (!expiryDate) {
-      throw new Error(`Could not find an expiry date. Cookie may be expired or Hax blocked the request. ${JSON.stringify(await pageDiagnostics(page, infoText))}`);
+      const diagnostics = await pageDiagnostics(page, infoText);
+      const reason = isCloudflareChallenge(diagnostics)
+        ? 'Cloudflare challenge did not clear on GitHub Actions. The cookie may be valid in your browser but blocked on GitHub runner.'
+        : 'Could not find an expiry date. Cookie may be expired or the Hax page format changed.';
+      throw new Error(`${reason} ${JSON.stringify(diagnostics)}`);
     }
 
     const remainingDays = daysUntil(expiryDate);
