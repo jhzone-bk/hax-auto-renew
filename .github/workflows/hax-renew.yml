@@ -31,6 +31,12 @@ jobs:
       - name: Run parser tests
         run: npm test
 
+      - name: Test Telegram notification
+        run: node scripts/telegram-smoke.js
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
       - name: Check Hax VPS expiry
         run: timeout 90s xvfb-run -a npm run renew
         env:
