@@ -69,14 +69,23 @@ async function createSession() {
     headless: config.headless,
     args: [
       '--disable-blink-features=AutomationControlled',
+      '--disable-background-networking',
+      '--disable-background-timer-throttling',
       '--disable-dev-shm-usage',
-      '--no-sandbox'
+      '--disable-extensions',
+      '--disable-features=MediaRouter,OptimizationHints,Translate',
+      '--disable-gpu',
+      '--disable-renderer-backgrounding',
+      '--disable-sync',
+      '--no-sandbox',
+      '--renderer-process-limit=1',
+      '--js-flags=--max-old-space-size=128'
     ],
     timezoneId: config.timezone,
     locale: 'en-US',
     userAgent: USER_AGENT,
-    viewport: { width: 1920, height: 1080 },
-    screen: { width: 1920, height: 1080 },
+    viewport: { width: 1000, height: 700 },
+    screen: { width: 1000, height: 700 },
     extraHTTPHeaders: {
       'accept-language': 'en-US,en;q=0.9,id;q=0.8,zh-CN;q=0.7'
     }
@@ -230,12 +239,17 @@ function isLoginPage(diagnostics) {
 }
 
 async function waitForManualTelegramLogin(page, diagnostics) {
+  const clicked = await triggerTelegramLogin(page);
   await notify(
     'Hax VPS login confirmation needed',
-    `Hax is on the Telegram login page. I clicked the Telegram login control when it was available. Open Telegram and tap Confirm within ${config.loginWaitMinutes} minutes.\n\nCurrent page: ${diagnostics.title}\n${diagnostics.url}`
+    clicked
+      ? `Hax is on the Telegram login page. I clicked the Telegram login control. Open Telegram and tap Confirm within ${config.loginWaitMinutes} minutes.\n\nCurrent page: ${diagnostics.title}\n${diagnostics.url}`
+      : `Hax is on the login page, but I could not find a clickable Telegram login control. ${JSON.stringify(diagnostics)}`
   );
 
-  await triggerTelegramLogin(page);
+  if (!clicked) {
+    throw new Error(`Could not find a clickable Telegram login control. ${JSON.stringify(diagnostics)}`);
+  }
 
   const deadline = Date.now() + config.loginWaitMinutes * 60_000;
   let lastDiagnostics = diagnostics;
@@ -281,7 +295,7 @@ async function triggerTelegramLogin(page) {
     const count = await locator.count().catch(() => 0);
     if (count === 1 && await locator.first().isVisible().catch(() => false)) {
       await locator.first().click({ timeout: 5_000 }).catch(() => {});
-      return;
+      return true;
     }
   }
 
@@ -289,7 +303,7 @@ async function triggerTelegramLogin(page) {
   const frameCount = await telegramFrames.count().catch(() => 0);
   if (frameCount === 1) {
     await page.frameLocator('iframe[src*="oauth.telegram.org"], iframe[src*="telegram"]').locator('body').click({ timeout: 5_000 }).catch(() => {});
-    return;
+    return true;
   }
 
   const visibleFrames = page.locator('iframe:visible');
@@ -298,8 +312,11 @@ async function triggerTelegramLogin(page) {
     const box = await visibleFrames.first().boundingBox().catch(() => null);
     if (box) {
       await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+      return true;
     }
   }
+
+  return false;
 }
 
 function hasExistingProfile(profileDir) {
