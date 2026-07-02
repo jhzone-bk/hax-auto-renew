@@ -104,16 +104,37 @@ async function createSession() {
     await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
   }
 
+  const page = await context.newPage();
+  for (const oldPage of context.pages()) {
+    if (oldPage !== page) {
+      await oldPage.close().catch(() => {});
+    }
+  }
+
   return {
     context,
-    page: context.pages()[0] || await context.newPage()
+    page
   };
 }
 
 async function loadInfoPage(page) {
-  await page.goto(config.infoUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+  await gotoWithRetry(page, config.infoUrl);
   await waitForCloudflare(page);
   return getBodyText(page);
+}
+
+async function gotoWithRetry(page, url) {
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      return;
+    } catch (error) {
+      if (attempt === 1 || !/ERR_ABORTED|frame was detached|Target page/.test(error.message)) {
+        throw error;
+      }
+      await page.waitForTimeout(2_000).catch(() => {});
+    }
+  }
 }
 
 function validateConfig(values) {
