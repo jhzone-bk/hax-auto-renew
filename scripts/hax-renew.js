@@ -19,11 +19,10 @@ const config = {
 };
 
 async function main() {
-  validateConfig(config);
-
   let context;
 
   try {
+    validateConfig(config);
     const session = await createSession();
     context = session.context;
     const page = session.page;
@@ -380,24 +379,34 @@ async function notify(title, message) {
   const text = limitTelegramText(`${title}\n\n${message}`);
   console.log(text);
 
-  const response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: config.telegramChatId,
-      text,
-      disable_web_page_preview: true
-    })
-  });
-
-  if (!response.ok) {
-    console.warn(`Telegram notification failed with HTTP ${response.status}.`);
+  if (!config.telegramBotToken || !config.telegramChatId) {
+    console.warn('Telegram notification skipped because TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing.');
     return;
   }
 
-  const result = await response.json().catch(() => null);
-  if (result && result.ok !== true) {
-    console.warn(`Telegram notification failed: ${result.description || JSON.stringify(result)}`);
+  try {
+    const response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: config.telegramChatId,
+        text,
+        disable_web_page_preview: true
+      })
+    });
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => '');
+      console.warn(`Telegram notification failed with HTTP ${response.status}: ${body.slice(0, 500)}`);
+      return;
+    }
+
+    const result = await response.json().catch(() => null);
+    if (result && result.ok !== true) {
+      console.warn(`Telegram notification failed: ${result.description || JSON.stringify(result)}`);
+    }
+  } catch (error) {
+    console.warn(`Telegram notification request failed: ${summarizeError(error)}`);
   }
 }
 
