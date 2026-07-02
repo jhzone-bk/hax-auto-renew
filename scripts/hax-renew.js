@@ -21,11 +21,13 @@ const config = {
 async function main() {
   validateConfig(config);
 
-  const session = await createSession();
-  let context = session.context;
-  let page = session.page;
+  let context;
 
   try {
+    const session = await createSession();
+    context = session.context;
+    const page = session.page;
+
     let infoText = await loadInfoPage(page);
     let expiryDate = findExpiryDate(infoText);
 
@@ -60,7 +62,9 @@ async function main() {
     await notify('Hax VPS expiry check failed', error.message);
     throw error;
   } finally {
-    await context.close();
+    if (context) {
+      await context.close().catch(() => {});
+    }
   }
 }
 
@@ -93,18 +97,20 @@ async function createSession() {
 
   const profileDir = config.profileDir || '';
   const hadProfile = hasExistingProfile(profileDir);
-  const context = profileDir
-    ? await chromium.launchPersistentContext(profileDir, contextOptions)
-    : await chromium.launchPersistentContext('', contextOptions);
+  const context = await withStepError('Chromium launch failed', () => (
+    profileDir
+      ? chromium.launchPersistentContext(profileDir, contextOptions)
+      : chromium.launchPersistentContext('', contextOptions)
+  ));
 
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
   if (config.cookie && !hadProfile) {
-    await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
+    await withStepError('Adding Hax cookies failed', () => context.addCookies(parseCookieHeader(config.cookie, config.infoUrl)));
   }
 
-  const page = await context.newPage();
+  const page = await withStepError('Opening a new Chromium page failed', () => context.newPage());
   for (const oldPage of context.pages()) {
     if (oldPage !== page) {
       await oldPage.close().catch(() => {});
@@ -115,6 +121,14 @@ async function createSession() {
     context,
     page
   };
+}
+
+async function withStepError(label, action) {
+  try {
+    return await action();
+  } catch (error) {
+    throw new Error(`${label}: ${error.message}`);
+  }
 }
 
 async function loadInfoPage(page) {
