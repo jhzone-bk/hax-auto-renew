@@ -59,7 +59,7 @@ async function main() {
 
     await notify('Hax VPS expiry reminder', message);
   } catch (error) {
-    await notify('Hax VPS expiry check failed', error.message);
+    await notify('Hax VPS expiry check failed', summarizeError(error));
     throw error;
   } finally {
     if (context) {
@@ -127,7 +127,7 @@ async function withStepError(label, action) {
   try {
     return await action();
   } catch (error) {
-    throw new Error(`${label}: ${error.message}`);
+    throw new Error(`${label}: ${summarizeError(error)}`);
   }
 }
 
@@ -377,14 +377,15 @@ async function waitForCloudflare(page) {
 }
 
 async function notify(title, message) {
-  console.log(`${title}: ${message}`);
+  const text = limitTelegramText(`${title}\n\n${message}`);
+  console.log(text);
 
   const response = await fetch(`https://api.telegram.org/bot${config.telegramBotToken}/sendMessage`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       chat_id: config.telegramChatId,
-      text: `${title}\n\n${message}`,
+      text,
       disable_web_page_preview: true
     })
   });
@@ -402,6 +403,23 @@ async function notify(title, message) {
 
 function formatDate(date) {
   return date.toISOString().slice(0, 10);
+}
+
+function summarizeError(error) {
+  const message = error && error.message ? error.message : String(error);
+  return message
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !line.startsWith('- <') && !line.startsWith('at '))
+    .slice(0, 12)
+    .join('\n');
+}
+
+function limitTelegramText(text) {
+  const maxLength = 3500;
+  if (text.length <= maxLength) return text;
+  return `${text.slice(0, maxLength)}\n\n[message truncated]`;
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
