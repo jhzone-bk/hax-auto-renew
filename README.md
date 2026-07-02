@@ -26,9 +26,9 @@ Use a self-hosted runner when Hax rejects GitHub-hosted runners or ties login se
 
 ## Cookie Renewal
 
-If Hax redirects to login, Cloudflare has passed but the Hax login session cookie is expired or incomplete. Replace `HAX_COOKIE` with a fresh full cookie from a browser that is already logged in to Hax, then run the workflow again.
+If Hax redirects to login, Cloudflare has passed but the Hax login session is expired. The script tries to click the Telegram login control and sends a Telegram message asking you to tap Confirm.
 
-If Cloudflare blocks GitHub Actions, the workflow sends a separate failure message saying the Cloudflare challenge did not clear.
+If Cloudflare blocks the runner, the workflow sends a separate failure message saying the Cloudflare challenge did not clear. In that case the Telegram login button does not exist yet, so there is nothing to confirm in Telegram until Cloudflare is passed once in the runner browser.
 
 ## WeChat
 

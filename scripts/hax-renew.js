@@ -32,16 +32,10 @@ async function main() {
     if (!expiryDate) {
       const diagnostics = await pageDiagnostics(page, infoText);
       if (isCloudflareChallenge(diagnostics)) {
-        await context.close();
-        ({ context, page } = await refreshCloudflareCookies());
-        infoText = await loadInfoPage(page);
-        expiryDate = findExpiryDate(infoText);
+        throw new Error(`Cloudflare challenge did not clear on the runner. Open the runner browser once to pass Cloudflare, then run again. ${JSON.stringify(diagnostics)}`);
       }
-    }
 
-    if (!expiryDate) {
-      const diagnostics = await pageDiagnostics(page, infoText);
-      if (isCloudflareChallenge(diagnostics) || isLoginPage(diagnostics)) {
+      if (isLoginPage(diagnostics)) {
         ({ infoText, expiryDate } = await waitForManualTelegramLogin(page, diagnostics));
       }
     }
@@ -63,7 +57,7 @@ async function main() {
 
     await notify('Hax VPS expiry reminder', message);
   } catch (error) {
-    await notify('Hax VPS cookie check failed', `Hax VPS expiry check failed: ${error.message}`);
+    await notify('Hax VPS expiry check failed', error.message);
     throw error;
   } finally {
     await context.close();
@@ -235,22 +229,10 @@ function isLoginPage(diagnostics) {
   return /\/login\b/i.test(diagnostics.url) || diagnostics.hasLoginText;
 }
 
-async function refreshCloudflareCookies() {
-  const refreshUrl = new URL('/create-vps/', config.infoUrl).href;
-  const { context, page } = await createSession();
-  console.log(`Refreshing Cloudflare cookies from ${refreshUrl}`);
-  await page.goto(refreshUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
-  await waitForCloudflare(page);
-  const cookies = await context.cookies();
-  const cookieNames = cookies.map((cookie) => cookie.name).join(', ');
-  console.log(`Cloudflare cookie refresh completed. Cookie names: ${cookieNames || 'none'}`);
-  return { context, page };
-}
-
 async function waitForManualTelegramLogin(page, diagnostics) {
   await notify(
     'Hax VPS login confirmation needed',
-    `Hax needs Telegram login confirmation. Open Telegram and tap Confirm within ${config.loginWaitMinutes} minutes.\n\nCurrent page: ${diagnostics.title}\n${diagnostics.url}`
+    `Hax is on the Telegram login page. I clicked the Telegram login control when it was available. Open Telegram and tap Confirm within ${config.loginWaitMinutes} minutes.\n\nCurrent page: ${diagnostics.title}\n${diagnostics.url}`
   );
 
   await triggerTelegramLogin(page);
@@ -307,6 +289,16 @@ async function triggerTelegramLogin(page) {
   const frameCount = await telegramFrames.count().catch(() => 0);
   if (frameCount === 1) {
     await page.frameLocator('iframe[src*="oauth.telegram.org"], iframe[src*="telegram"]').locator('body').click({ timeout: 5_000 }).catch(() => {});
+    return;
+  }
+
+  const visibleFrames = page.locator('iframe:visible');
+  const visibleFrameCount = await visibleFrames.count().catch(() => 0);
+  if (visibleFrameCount === 1) {
+    const box = await visibleFrames.first().boundingBox().catch(() => null);
+    if (box) {
+      await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2).catch(() => {});
+    }
   }
 }
 
