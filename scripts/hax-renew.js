@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { daysUntil, findExpiryDate } from './expiry-parser.js';
@@ -15,22 +14,14 @@ const config = {
   loginPollSeconds: Number.parseInt(process.env.HAX_LOGIN_POLL_SECONDS || '15', 10),
   timezone: process.env.TIMEZONE || 'Asia/Shanghai',
   infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info',
-  storageStatePath: process.env.HAX_STORAGE_STATE_PATH || '',
+  profileDir: process.env.HAX_PROFILE_DIR || '',
   headless: process.env.HAX_HEADLESS !== 'false'
 };
 
 async function main() {
   validateConfig(config);
 
-  const browser = await chromium.launch({
-    headless: config.headless,
-    args: [
-      '--disable-blink-features=AutomationControlled',
-      '--disable-dev-shm-usage',
-      '--no-sandbox'
-    ]
-  });
-  const session = await createSession(browser);
+  const session = await createSession();
   let context = session.context;
   let page = session.page;
 
@@ -42,7 +33,7 @@ async function main() {
       const diagnostics = await pageDiagnostics(page, infoText);
       if (isCloudflareChallenge(diagnostics)) {
         await context.close();
-        ({ context, page } = await refreshCloudflareCookies(browser));
+        ({ context, page } = await refreshCloudflareCookies());
         infoText = await loadInfoPage(page);
         expiryDate = findExpiryDate(infoText);
       }
@@ -65,8 +56,6 @@ async function main() {
       throw new Error(`${reason} ${JSON.stringify(diagnostics)}`);
     }
 
-    await saveSession(context);
-
     const remainingDays = daysUntil(expiryDate);
     const message = remainingDays <= config.thresholdDays
       ? `Hax VPS is close to expiry: ${formatDate(expiryDate)} (${remainingDays} days left).`
@@ -77,12 +66,18 @@ async function main() {
     await notify('Hax VPS cookie check failed', `Hax VPS expiry check failed: ${error.message}`);
     throw error;
   } finally {
-    await browser.close();
+    await context.close();
   }
 }
 
-async function createSession(browser) {
+async function createSession() {
   const contextOptions = {
+    headless: config.headless,
+    args: [
+      '--disable-blink-features=AutomationControlled',
+      '--disable-dev-shm-usage',
+      '--no-sandbox'
+    ],
     timezoneId: config.timezone,
     locale: 'en-US',
     userAgent: USER_AGENT,
@@ -93,23 +88,22 @@ async function createSession(browser) {
     }
   };
 
-  const hasStorageState = config.storageStatePath && fs.existsSync(config.storageStatePath);
-  if (hasStorageState) {
-    contextOptions.storageState = config.storageStatePath;
-  }
-
-  const context = await browser.newContext(contextOptions);
+  const profileDir = config.profileDir || '';
+  const hadProfile = hasExistingProfile(profileDir);
+  const context = profileDir
+    ? await chromium.launchPersistentContext(profileDir, contextOptions)
+    : await chromium.launchPersistentContext('', contextOptions);
 
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
-  if (config.cookie && !hasStorageState) {
+  if (config.cookie && !hadProfile) {
     await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
   }
 
   return {
     context,
-    page: await context.newPage()
+    page: context.pages()[0] || await context.newPage()
   };
 }
 
@@ -241,9 +235,9 @@ function isLoginPage(diagnostics) {
   return /\/login\b/i.test(diagnostics.url) || diagnostics.hasLoginText;
 }
 
-async function refreshCloudflareCookies(browser) {
+async function refreshCloudflareCookies() {
   const refreshUrl = new URL('/create-vps/', config.infoUrl).href;
-  const { context, page } = await createSession(browser);
+  const { context, page } = await createSession();
   console.log(`Refreshing Cloudflare cookies from ${refreshUrl}`);
   await page.goto(refreshUrl, { waitUntil: 'domcontentloaded', timeout: 60_000 });
   await waitForCloudflare(page);
@@ -316,12 +310,13 @@ async function triggerTelegramLogin(page) {
   }
 }
 
-async function saveSession(context) {
-  if (!config.storageStatePath) return;
-
-  await fs.promises.mkdir(path.dirname(config.storageStatePath), { recursive: true });
-  await context.storageState({ path: config.storageStatePath });
-  console.log(`Saved Hax browser session to ${config.storageStatePath}`);
+function hasExistingProfile(profileDir) {
+  if (!profileDir) return false;
+  try {
+    return fs.existsSync(profileDir) && fs.readdirSync(profileDir).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 async function waitForCloudflare(page) {

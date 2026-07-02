@@ -40,6 +40,6 @@ jobs:
           REMIND_THRESHOLD_DAYS: ${{ vars.REMIND_THRESHOLD_DAYS || vars.RENEW_THRESHOLD_DAYS || '3' }}
           HAX_LOGIN_WAIT_MINUTES: ${{ vars.HAX_LOGIN_WAIT_MINUTES || '10' }}
           HAX_HEADLESS: 'false'
-          HAX_STORAGE_STATE_PATH: /opt/actions-runner/.hax-browser-state.json
+          HAX_PROFILE_DIR: /opt/actions-runner/.hax-browser-profile
           TIMEZONE: ${{ vars.TIMEZONE || 'Asia/Shanghai' }}
           HAX_INFO_URL: ${{ vars.HAX_INFO_URL || 'https://hax.co.id/vps-info' }}
