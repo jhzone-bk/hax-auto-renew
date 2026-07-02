@@ -16,6 +16,13 @@ test('parses Indonesian month name near expiry hint', () => {
   assert.equal(date.toISOString().slice(0, 10), '2026-07-05');
 });
 
+test('parses Hax valid-until month-first date', () => {
+  const text = 'VPS Information\nValid until\nJuly 5, 2026\nHostname\nexample';
+  const date = findExpiryDate(text, new Date('2026-07-02T00:00:00Z'));
+
+  assert.equal(date.toISOString().slice(0, 10), '2026-07-05');
+});
+
 test('calculates remaining days from UTC day boundaries', () => {
   const now = new Date('2026-06-30T18:00:00Z');
   const expiry = new Date('2026-07-03T00:00:00Z');

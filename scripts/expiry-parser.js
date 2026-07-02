@@ -1,7 +1,8 @@
 const DATE_PATTERNS = [
   /\b(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\b/g,
   /\b(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})(?:\s+\d{1,2}:\d{2}(?::\d{2})?)?\b/g,
-  /\b(\d{1,2})\s+(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+(\d{4})\b/gi
+  /\b(\d{1,2})\s+(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+(\d{4})\b/gi,
+  /\b(Jan|January|Feb|February|Mar|March|Apr|April|May|Jun|June|Jul|July|Aug|August|Sep|Sept|September|Oct|October|Nov|November|Dec|December|Januari|Februari|Maret|Mei|Juni|Juli|Agustus|Agu|Oktober|Desember)\s+(\d{1,2}),?\s+(\d{4})\b/gi
 ];
 
 const MONTHS = new Map([
@@ -78,6 +79,10 @@ function collectDateCandidates(text) {
 }
 
 function parseMatchedDate(match) {
+  if (/^[A-Za-z]/.test(match[1] ?? '')) {
+    return makeUtcDate(Number(match[3]), MONTHS.get(match[1].toLowerCase()), Number(match[2]));
+  }
+
   if (/^[A-Za-z]/.test(match[2] ?? '')) {
     return makeUtcDate(Number(match[3]), MONTHS.get(match[2].toLowerCase()), Number(match[1]));
   }
