@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { chromium } from 'playwright';
 import { daysUntil, findExpiryDate } from './expiry-parser.js';
@@ -9,8 +11,11 @@ const config = {
   telegramBotToken: process.env.TELEGRAM_BOT_TOKEN,
   telegramChatId: process.env.TELEGRAM_CHAT_ID,
   thresholdDays: Number.parseInt(process.env.REMIND_THRESHOLD_DAYS || process.env.RENEW_THRESHOLD_DAYS || '3', 10),
+  loginWaitMinutes: Number.parseInt(process.env.HAX_LOGIN_WAIT_MINUTES || '10', 10),
+  loginPollSeconds: Number.parseInt(process.env.HAX_LOGIN_POLL_SECONDS || '15', 10),
   timezone: process.env.TIMEZONE || 'Asia/Shanghai',
   infoUrl: process.env.HAX_INFO_URL || 'https://hax.co.id/vps-info',
+  storageStatePath: process.env.HAX_STORAGE_STATE_PATH || '',
   headless: process.env.HAX_HEADLESS !== 'false'
 };
 
@@ -45,13 +50,22 @@ async function main() {
 
     if (!expiryDate) {
       const diagnostics = await pageDiagnostics(page, infoText);
+      if (isCloudflareChallenge(diagnostics) || isLoginPage(diagnostics)) {
+        ({ infoText, expiryDate } = await waitForManualTelegramLogin(page, diagnostics));
+      }
+    }
+
+    if (!expiryDate) {
+      const diagnostics = await pageDiagnostics(page, infoText);
       const reason = isCloudflareChallenge(diagnostics)
-        ? 'Cloudflare challenge did not clear on GitHub Actions. The cookie may be valid in your browser but blocked on GitHub runner.'
+        ? 'Cloudflare challenge did not clear on the runner.'
         : isLoginPage(diagnostics)
-          ? 'Cloudflare passed, but Hax redirected to login. HAX_COOKIE is expired or does not include the full logged-in session cookie.'
+          ? 'Hax still redirects to login. Telegram confirmation was not completed or the session was not accepted.'
         : 'Could not find an expiry date. Cookie may be expired or the Hax page format changed.';
       throw new Error(`${reason} ${JSON.stringify(diagnostics)}`);
     }
+
+    await saveSession(context);
 
     const remainingDays = daysUntil(expiryDate);
     const message = remainingDays <= config.thresholdDays
@@ -68,7 +82,7 @@ async function main() {
 }
 
 async function createSession(browser) {
-  const context = await browser.newContext({
+  const contextOptions = {
     timezoneId: config.timezone,
     locale: 'en-US',
     userAgent: USER_AGENT,
@@ -77,12 +91,21 @@ async function createSession(browser) {
     extraHTTPHeaders: {
       'accept-language': 'en-US,en;q=0.9,id;q=0.8,zh-CN;q=0.7'
     }
-  });
+  };
+
+  const hasStorageState = config.storageStatePath && fs.existsSync(config.storageStatePath);
+  if (hasStorageState) {
+    contextOptions.storageState = config.storageStatePath;
+  }
+
+  const context = await browser.newContext(contextOptions);
 
   await context.addInitScript(() => {
     Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
   });
-  await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
+  if (config.cookie && !hasStorageState) {
+    await context.addCookies(parseCookieHeader(config.cookie, config.infoUrl));
+  }
 
   return {
     context,
@@ -98,7 +121,6 @@ async function loadInfoPage(page) {
 
 function validateConfig(values) {
   const missing = [
-    ['HAX_COOKIE', values.cookie],
     ['TELEGRAM_BOT_TOKEN', values.telegramBotToken],
     ['TELEGRAM_CHAT_ID', values.telegramChatId]
   ].filter(([, value]) => !value);
@@ -109,6 +131,14 @@ function validateConfig(values) {
 
   if (!Number.isInteger(values.thresholdDays) || values.thresholdDays < 0) {
     throw new Error('REMIND_THRESHOLD_DAYS must be a non-negative integer.');
+  }
+
+  if (!Number.isInteger(values.loginWaitMinutes) || values.loginWaitMinutes < 1) {
+    throw new Error('HAX_LOGIN_WAIT_MINUTES must be a positive integer.');
+  }
+
+  if (!Number.isInteger(values.loginPollSeconds) || values.loginPollSeconds < 5) {
+    throw new Error('HAX_LOGIN_POLL_SECONDS must be an integer of at least 5.');
   }
 }
 
@@ -221,6 +251,77 @@ async function refreshCloudflareCookies(browser) {
   const cookieNames = cookies.map((cookie) => cookie.name).join(', ');
   console.log(`Cloudflare cookie refresh completed. Cookie names: ${cookieNames || 'none'}`);
   return { context, page };
+}
+
+async function waitForManualTelegramLogin(page, diagnostics) {
+  await notify(
+    'Hax VPS login confirmation needed',
+    `Hax needs Telegram login confirmation. Open Telegram and tap Confirm within ${config.loginWaitMinutes} minutes.\n\nCurrent page: ${diagnostics.title}\n${diagnostics.url}`
+  );
+
+  await triggerTelegramLogin(page);
+
+  const deadline = Date.now() + config.loginWaitMinutes * 60_000;
+  let lastDiagnostics = diagnostics;
+
+  while (Date.now() < deadline) {
+    await page.waitForTimeout(config.loginPollSeconds * 1000);
+    await triggerTelegramLogin(page);
+
+    const infoText = await loadInfoPage(page).catch(async (error) => {
+      lastDiagnostics = {
+        ...lastDiagnostics,
+        error: error.message
+      };
+      return null;
+    });
+    if (!infoText) continue;
+
+    const expiryDate = findExpiryDate(infoText);
+    if (expiryDate) {
+      await notify('Hax VPS login confirmed', 'Telegram confirmation worked. The VPS info page is now accessible.');
+      return { infoText, expiryDate };
+    }
+
+    lastDiagnostics = await pageDiagnostics(page, infoText);
+    if (!isCloudflareChallenge(lastDiagnostics) && !isLoginPage(lastDiagnostics)) {
+      return { infoText, expiryDate: null };
+    }
+  }
+
+  throw new Error(`Manual Telegram login was not completed within ${config.loginWaitMinutes} minutes. ${JSON.stringify(lastDiagnostics)}`);
+}
+
+async function triggerTelegramLogin(page) {
+  const selectors = [
+    'a[href*="oauth.telegram.org"]',
+    'a[href*="telegram"]',
+    'button:has-text("Telegram")',
+    '[role="button"]:has-text("Telegram")'
+  ];
+
+  for (const selector of selectors) {
+    const locator = page.locator(selector);
+    const count = await locator.count().catch(() => 0);
+    if (count === 1 && await locator.first().isVisible().catch(() => false)) {
+      await locator.first().click({ timeout: 5_000 }).catch(() => {});
+      return;
+    }
+  }
+
+  const telegramFrames = page.locator('iframe[src*="oauth.telegram.org"], iframe[src*="telegram"]');
+  const frameCount = await telegramFrames.count().catch(() => 0);
+  if (frameCount === 1) {
+    await page.frameLocator('iframe[src*="oauth.telegram.org"], iframe[src*="telegram"]').locator('body').click({ timeout: 5_000 }).catch(() => {});
+  }
+}
+
+async function saveSession(context) {
+  if (!config.storageStatePath) return;
+
+  await fs.promises.mkdir(path.dirname(config.storageStatePath), { recursive: true });
+  await context.storageState({ path: config.storageStatePath });
+  console.log(`Saved Hax browser session to ${config.storageStatePath}`);
 }
 
 async function waitForCloudflare(page) {
