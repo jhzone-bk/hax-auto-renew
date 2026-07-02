@@ -32,7 +32,7 @@ jobs:
         run: npm test
 
       - name: Check Hax VPS expiry
-        run: xvfb-run -a npm run renew
+        run: timeout 90s xvfb-run -a npm run renew
         env:
           HAX_COOKIE: ${{ secrets.HAX_COOKIE }}
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}

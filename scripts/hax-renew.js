@@ -118,7 +118,12 @@ async function createSession() {
 }
 
 async function loadInfoPage(page) {
-  await gotoWithRetry(page, config.infoUrl);
+  try {
+    await gotoWithRetry(page, config.infoUrl);
+  } catch (error) {
+    const diagnostics = await pageDiagnostics(page, '');
+    throw new Error(`Hax navigation failed before the page loaded: ${error.message} ${JSON.stringify(diagnostics)}`);
+  }
   await waitForCloudflare(page);
   return getBodyText(page);
 }
